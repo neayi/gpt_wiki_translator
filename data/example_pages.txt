@@ -1,0 +1,14 @@
+# Example input file for gpt_wiki_translator
+# Lines starting with # are comments and will be ignored
+
+# Production environment URLs
+https://fr.tripleperformance.ag/wiki/Bl%C3%A9
+https://fr.tripleperformance.ag/wiki/Ma%C3%AFs
+
+# Development environment URLs (will stay in dev)
+https://fr.dev.tripleperformance.ag/wiki/Tr%C3%A8fle
+https://fr.dev.tripleperformance.ag/wiki/Orge
+
+# You can also use plain titles if MEDIAWIKI_API_ENDPOINT is set in .env
+# Example_Page
+# Another_Page

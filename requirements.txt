@@ -1,0 +1,8 @@
+openai>=1.0.0
+mwparserfromhell>=0.6.5
+requests>=2.31.0
+python-dotenv>=1.0.0
+tenacity>=8.2.0
+tqdm>=4.66.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
