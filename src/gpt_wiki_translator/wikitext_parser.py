@@ -1,6 +1,7 @@
 from __future__ import annotations
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 import mwparserfromhell
+import unicodedata
 
 # Types
 Segment = Tuple[str, str]  # (kind, content) where kind can be 'text' or 'protected'
@@ -12,6 +13,25 @@ PROTECTED_NODE_TYPES = (
     mwparserfromhell.nodes.Wikilink,
     mwparserfromhell.nodes.ExternalLink,
 )
+
+# Paramètres de templates dont les valeurs ne doivent JAMAIS être traduites
+PROTECTED_TEMPLATE_PARAMS = {
+    'glyph',
+    'icone',
+    'bannière',
+    'banniere',  # variante sans accent éventuelle
+    "photo de l'agriculteur",
+    'logo',
+    "photo d'illustration",
+    'logo organisme',
+}
+
+def _normalize_param_name(name: str) -> str:
+    """Normalise un nom de paramètre pour comparaison (minuscule, sans accents, trim)."""
+    name = name.strip().lower()
+    # Remove diacritics
+    name = ''.join(ch for ch in unicodedata.normalize('NFD', name) if unicodedata.category(ch) != 'Mn')
+    return name
 
 def segment_wikitext(wikitext: str) -> List[Segment]:
     """Découpe le wikitext en segments textuels traduisibles et segments protégés.
@@ -42,3 +62,49 @@ def merge_translated(segments: List[Segment], translated_texts: List[str]) -> st
 
 def count_braces(wikitext: str) -> tuple[int, int]:
     return wikitext.count('{{'), wikitext.count('}}')
+
+
+def restore_protected_template_params(original_wikitext: str, translated_wikitext: str) -> str:
+    """Restaure dans le wikitext traduit les valeurs des paramètres sensibles qui ne doivent pas
+    être modifiées par la traduction.
+
+    Stratégie:
+    1. Parse original et collecter (template_index, normalized_param_name) -> valeur originale.
+    2. Parse traduit et pour chaque template/param correspondant, replacer la valeur originale.
+    On s'appuie sur l'ordre des templates pour limiter ambiguïtés (suffisant dans ce contexte).
+    """
+    try:
+        orig_code = mwparserfromhell.parse(original_wikitext)
+        trans_code = mwparserfromhell.parse(translated_wikitext)
+    except Exception:
+        return translated_wikitext  # en cas de parsing impossible, on ne touche à rien
+
+    # Collecte des valeurs originales
+    original_values: Dict[Tuple[int, str], str] = {}
+    for idx, node in enumerate(orig_code.filter_templates()):
+        if not isinstance(node, mwparserfromhell.nodes.Template):
+            continue
+        for param in node.params:
+            norm = _normalize_param_name(str(param.name))
+            if norm in PROTECTED_TEMPLATE_PARAMS:
+                original_values[(idx, norm)] = str(param.value)
+
+    if not original_values:
+        return translated_wikitext  # rien à restaurer
+
+    # Remplacement dans la version traduite
+    for idx, node in enumerate(trans_code.filter_templates()):
+        if not isinstance(node, mwparserfromhell.nodes.Template):
+            continue
+        for param in node.params:
+            norm = _normalize_param_name(str(param.name))
+            key = (idx, norm)
+            if key in original_values:
+                # Remplacer la valeur du paramètre si différente
+                try:
+                    if str(param.value) != original_values[key]:
+                        param.value = original_values[key]
+                except Exception:
+                    continue
+
+    return str(trans_code)

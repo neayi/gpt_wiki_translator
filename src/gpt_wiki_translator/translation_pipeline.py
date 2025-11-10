@@ -5,7 +5,7 @@ from .config import get_settings
 from .logging_utils import get_logger
 from .mediawiki_client import MediaWikiClient
 from .openai_client import OpenAIClient
-from .wikitext_parser import segment_wikitext, merge_translated, count_braces
+from .wikitext_parser import segment_wikitext, merge_translated, count_braces, restore_protected_template_params
 from .namespace_mapping import translate_namespace_prefix
 from .chunking import create_chunks, get_chunk_stats
 import csv
@@ -120,9 +120,10 @@ class TranslationPipeline:
         for i, chunk in enumerate(tqdm(chunks, desc=f'Translating {title}', leave=False)):
             translated = self.ai.translate_chunk(chunk, self.source_lang, self.target_lang)
             translated_chunks.append(translated)
-        
         # Reconstruct full translated wikitext
         new_wikitext = '\n\n'.join(translated_chunks)
+        # Restore protected template parameter values (Glyph, Icone, etc.)
+        new_wikitext = restore_protected_template_params(wikitext, new_wikitext)
         # Validation simple locale
         ob_open, ob_close = count_braces(wikitext)
         nb_open, nb_close = count_braces(new_wikitext)
