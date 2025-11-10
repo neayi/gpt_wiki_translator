@@ -79,6 +79,22 @@ class MediaWikiClient:
                 return page['revisions'][0]['slots']['main']['*']
         return None
 
+    def page_exists(self, title: str) -> bool:
+        """Check if a page exists."""
+        params = {
+            'action': 'query',
+            'titles': title,
+            'format': 'json'
+        }
+        r = self.session.get(self.endpoint, params=params, timeout=30, verify=self.verify_ssl)
+        r.raise_for_status()
+        data = r.json()
+        pages = data.get('query', {}).get('pages', {})
+        for page_id, page in pages.items():
+            # If page_id is negative, the page doesn't exist
+            return int(page_id) > 0
+        return False
+
     def get_langlinks(self, title: str) -> dict[str, str]:
         params = {
             'action': 'query',

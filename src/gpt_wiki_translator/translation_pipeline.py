@@ -11,7 +11,7 @@ from .chunking import create_chunks, get_chunk_stats
 import csv
 from tqdm import tqdm
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = get_logger()
 
@@ -82,15 +82,31 @@ class TranslationPipeline:
         langlinks = self.source_mw.get_langlinks(title)
         if self.target_lang in langlinks and not self.force:
             logger.info('Skip %s (already translated -> %s)', title, langlinks[self.target_lang])
-            date_iso = datetime.utcnow().isoformat()
-            self._append_log([title, langlinks[self.target_lang], self.source_lang, self.target_lang, 'skipped', date_iso, 'already'])
+            date_iso = datetime.now(timezone.utc).isoformat()
+            self._append_log([title, langlinks[self.target_lang], self.source_lang, self.target_lang, 'skipped', date_iso, 'already translated and present in the interwiki links'])
             return
         elif self.target_lang in langlinks and self.force:
             logger.info('Force mode: retranslating %s (existing: %s)', title, langlinks[self.target_lang])
+        
+        # Translate title early to check if target exists (avoid unnecessary API calls)
+        target_title = self._translate_title(title)
+        target_exists = self.target_mw.page_exists(target_title)
+        
+        # If target exists and --force not specified, only add interwiki link (no translation needed)
+        if target_exists and not self.force:
+            logger.info('Target page %s already exists. Only adding interwiki link to source page.', target_title)
+            if not self.dry_run:
+                target_interwiki = f"[[{self.target_lang}:{target_title}]]"
+                self.source_mw.append_interwiki_link(title, target_interwiki)
+            date_iso = datetime.now(timezone.utc).isoformat()
+            self._append_log([title, target_title, self.source_lang, self.target_lang, 'linked', date_iso, 'target exists - adding interwiki on the source page only'])
+            logger.info('Linked %s -> %s (target exists)', title, target_title)
+            return
+        
         wikitext = self.source_mw.fetch_page_wikitext(title)
         if wikitext is None:
             logger.warning('No wikitext for %s', title)
-            date_iso = datetime.utcnow().isoformat()
+            date_iso = datetime.now(timezone.utc).isoformat()
             self._append_log([title, '', self.source_lang, self.target_lang, 'error', date_iso, 'missing wikitext'])
             return
         
@@ -117,17 +133,22 @@ class TranslationPipeline:
             validation = json.loads(validation_raw)
         except json.JSONDecodeError:
             validation = {'issues': ['invalid JSON from validator']}
-        # Translate the page title itself (not just namespace prefix)
-        target_title = self._translate_title(title)
         
+        # Publish translated page (target_title already computed earlier)
         if not self.dry_run:
-            publish_resp = self.target_mw.create_or_update_page(target_title, new_wikitext)
-            interwiki_marker = f"[[:{self.target_lang}:{target_title}]]"
-            self.source_mw.append_interwiki_link(title, interwiki_marker)
+            # Create/update target page with interwiki link back to source
+            source_interwiki = f"[[{self.source_lang}:{title}]]"
+            new_wikitext_with_interwiki = new_wikitext + f"\n{source_interwiki}\n"
+            
+            publish_resp = self.target_mw.create_or_update_page(target_title, new_wikitext_with_interwiki)
+            
+            # Also add interwiki link in source page pointing to target
+            target_interwiki = f"[[{self.target_lang}:{target_title}]]"
+            self.source_mw.append_interwiki_link(title, target_interwiki)
         else:
             publish_resp = {'dry_run': True}
         
         # Add timestamp to log
-        date_iso = datetime.utcnow().isoformat()
+        date_iso = datetime.now(timezone.utc).isoformat()
         self._append_log([title, target_title, self.source_lang, self.target_lang, 'translated', date_iso, ';'.join(validation.get('issues', []))])
         logger.info('Translated %s -> %s (%s)', title, target_title, 'dry-run' if self.dry_run else 'published')
