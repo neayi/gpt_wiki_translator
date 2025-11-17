@@ -15,13 +15,13 @@ class MediaWikiClient:
         self.session = requests.Session()
         self.verify_ssl = verify_ssl
         self._csrf_token: str | None = None
-
+        
         # Disable SSL warnings if verification is disabled
         if not verify_ssl:
             import urllib3
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             logger.info('SSL verification disabled for %s', endpoint)
-
+        
         # Login if credentials provided
         if self.settings.mediawiki_username and self.settings.mediawiki_password:
             try:
@@ -79,43 +79,21 @@ class MediaWikiClient:
                 return page['revisions'][0]['slots']['main']['*']
         return None
 
-    def page_exists(self, title: str, resolve_redirects: bool = False) -> tuple[bool, str]:
-        """Check if a page exists.
-
-        Args:
-            title: The page title to check
-            resolve_redirects: If True, follow redirects and return the final target page
-
-        Returns:
-            tuple[bool, str]: (exists, final_title)
-            - exists: True if the page exists
-            - final_title: The final page title (after following redirects if resolve_redirects=True)
-        """
+    def page_exists(self, title: str) -> bool:
+        """Check if a page exists."""
         params = {
             'action': 'query',
             'titles': title,
             'format': 'json'
         }
-        if resolve_redirects:
-            params['redirects'] = '1'
-
         r = self.session.get(self.endpoint, params=params, timeout=30, verify=self.verify_ssl)
         r.raise_for_status()
         data = r.json()
-
-        # If redirects were followed, get the final title
-        final_title = title
-        if resolve_redirects:
-            redirects = data.get('query', {}).get('redirects', [])
-            if redirects:
-                final_title = redirects[-1].get('to', title)
-
         pages = data.get('query', {}).get('pages', {})
         for page_id, page in pages.items():
             # If page_id is negative, the page doesn't exist
-            exists = int(page_id) > 0
-            return exists, final_title
-        return False, title
+            return int(page_id) > 0
+        return False
 
     def get_langlinks(self, title: str) -> dict[str, str]:
         params = {
