@@ -5,7 +5,7 @@ from .config import get_settings
 from .logging_utils import get_logger
 from .mediawiki_client import MediaWikiClient
 from .openai_client import OpenAIClient
-from .wikitext_parser import segment_wikitext, merge_translated, count_braces, restore_protected_template_params
+from .wikitext_parser import segment_wikitext, merge_translated, count_braces, restore_protected_template_params, extract_json_template_params
 from .namespace_mapping import translate_namespace_prefix
 from .chunking import create_chunks, get_chunk_stats
 import csv
@@ -108,6 +108,50 @@ class TranslationPipeline:
             date_iso = datetime.now(timezone.utc).isoformat()
             self._append_log([title, '', self.source_lang, self.target_lang, 'error', date_iso, 'missing wikitext'])
             return
+
+        # Detect JSON subpage references in templates
+        json_refs = extract_json_template_params(wikitext)
+        json_replacements = {}
+        if json_refs:
+            logger.info('Found %d JSON template references', len(json_refs))
+            for raw in json_refs:
+                # Expect pattern Base/Subpage.json
+                if not raw.lower().endswith('.json') or '/' not in raw:
+                    continue
+                base, subfile = raw.rsplit('/', 1)
+                subname = subfile[:-5]  # remove .json
+                # Translate subpage name using AI (keep .json extension)
+                try:
+                    translated_subname = self.ai.translate_chunk(
+                        f"Translate this short name for a JSON subpage from {self.source_lang} to {self.target_lang}. Return ONLY the translated name: {subname}",
+                        self.source_lang,
+                        self.target_lang
+                    ).strip().strip('"\'')
+                except Exception:
+                    translated_subname = subname
+                target_json_title = f"{target_title}/{translated_subname}.json"
+                # Fetch original JSON content
+                orig_json_text = self.source_mw.fetch_page_wikitext(raw) or ''
+                translated_json_text = orig_json_text
+                # Attempt structured translation if JSON
+                import json as pyjson
+                try:
+                    data_obj = pyjson.loads(orig_json_text)
+                    # Ask model to translate JSON values preserving structure
+                    json_translation_prompt = (
+                        f"Translate the human-readable string VALUES inside this JSON from {self.source_lang} to {self.target_lang}. "
+                        "Do not change keys, numbers, or structure. Return valid JSON only.\n\n" + orig_json_text
+                    )
+                    translated_json_raw = self.ai.translate_chunk(json_translation_prompt, self.source_lang, self.target_lang)
+                    data_trans = pyjson.loads(translated_json_raw)
+                    translated_json_text = pyjson.dumps(data_trans, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    logger.warning('JSON translation failed or not JSON for %s: %s (keeping original)', raw, e)
+                # Create/update JSON page on target wiki
+                if not self.dry_run:
+                    self.target_mw.create_or_update_json_page(target_json_title, translated_json_text)
+                json_replacements[raw] = f"{target_title}/{translated_subname}.json"
+        
         
         # Use intelligent chunking by sections
         chunks = create_chunks(wikitext, max_tokens=7000)
@@ -123,6 +167,10 @@ class TranslationPipeline:
         new_wikitext = '\n\n'.join(translated_chunks)
         # Restore protected template parameter values (Glyph, Icone, etc.)
         new_wikitext = restore_protected_template_params(wikitext, new_wikitext)
+        # Apply JSON path replacements in translated wikitext
+        for original, newval in json_replacements.items():
+            # Replace only occurrences in json params (simple heuristic)
+            new_wikitext = new_wikitext.replace(original, newval)
         # Validation simple locale
         ob_open, ob_close = count_braces(wikitext)
         nb_open, nb_close = count_braces(new_wikitext)

@@ -108,3 +108,20 @@ def restore_protected_template_params(original_wikitext: str, translated_wikitex
                     continue
 
     return str(trans_code)
+
+def extract_json_template_params(wikitext: str) -> List[str]:
+    """Return list of raw values for parameters named 'json' in any template.
+    The value usually looks like 'Page/Subpage.json'."""
+    try:
+        code = mwparserfromhell.parse(wikitext)
+    except Exception:
+        return []
+    results: List[str] = []
+    for tpl in code.filter_templates():
+        if not isinstance(tpl, mwparserfromhell.nodes.Template):
+            continue
+        for param in tpl.params:
+            norm = _normalize_param_name(str(param.name))
+            if norm == 'json':
+                results.append(str(param.value).strip())
+    return results

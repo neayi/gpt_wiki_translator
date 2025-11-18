@@ -128,6 +128,24 @@ class MediaWikiClient:
         r.raise_for_status()
         return r.json()
 
+    def create_or_update_json_page(self, title: str, json_text: str, summary: str = 'Automated JSON translation') -> dict[str, Any]:
+        """Create or update a JSON content page. Uses appropriate content model if supported."""
+        token = self._get_token()
+        data = {
+            'action': 'edit',
+            'title': title,
+            'text': json_text,
+            'format': 'json',
+            'contentmodel': 'json',
+            'contentformat': 'application/json',
+            'token': token,
+            'summary': summary,
+            'watchlist': 'nochange'
+        }
+        r = self.session.post(self.endpoint, data=data, timeout=30, verify=self.verify_ssl)
+        r.raise_for_status()
+        return r.json()
+
     def append_interwiki_link(self, title: str, interwiki_marker: str, summary: str = 'Add interwiki link') -> dict[str, Any]:
         # Fetch current
         content = self.fetch_page_wikitext(title) or ''
