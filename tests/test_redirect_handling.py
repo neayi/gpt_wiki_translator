@@ -22,7 +22,7 @@ class TestRedirectHandling:
         # Source page setup
         source_mw.get_langlinks.return_value = {}
         source_mw.fetch_page_wikitext.return_value = "Test content"
-        source_mw.append_interwiki_link.return_value = {'success': True}
+        source_mw.add_or_update_interwiki_link.return_value = {'success': True}
 
         # Target page setup: exists and is a redirect to "Final Target Page"
         target_mw.page_exists.return_value = (True, "Final Target Page")
@@ -69,7 +69,7 @@ class TestRedirectHandling:
 
         # Source page setup
         source_mw.get_langlinks.return_value = {}
-        source_mw.append_interwiki_link.return_value = {'success': True}
+        source_mw.add_or_update_interwiki_link.return_value = {'success': True}
 
         # Target page setup: exists (redirect not resolved when force=False)
         target_mw.page_exists.return_value = (True, "Test Page EN")

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 import requests
 from typing import Any
 from .config import get_settings
@@ -146,10 +147,25 @@ class MediaWikiClient:
         r.raise_for_status()
         return r.json()
 
-    def append_interwiki_link(self, title: str, interwiki_marker: str, summary: str = 'Add interwiki link') -> dict[str, Any]:
+    def add_or_update_interwiki_link(self, title: str, interwiki_marker: str, summary: str = 'Add interwiki link') -> dict[str, Any]:
         # Fetch current
         content = self.fetch_page_wikitext(title) or ''
+        # If exact marker already present, skip
         if interwiki_marker in content:
             return {'skip': True, 'reason': 'already present'}
-        new_content = content + f"\n{interwiki_marker}\n"
+
+        # Try to detect the language from the marker and replace any existing link for that language
+        # Accept both forms [[en:Page]] and [[:en:Page]]
+        m = re.match(r"\[\[:?([a-zA-Z-]+):([^\]]+)\]\]", interwiki_marker)
+        if m:
+            lang = m.group(1)
+            # Pattern to find any existing interwiki link for the same language
+            pattern = re.compile(rf"\[\[:?{re.escape(lang)}:[^\]]+\]\]")
+            if pattern.search(content):
+                new_content = pattern.sub(interwiki_marker, content, count=1)
+                return self.create_or_update_page(title, new_content, summary=summary)
+
+        # Otherwise, append at the end
+        sep = "\n" if not content.endswith("\n") else ""
+        new_content = content + f"{sep}{interwiki_marker}\n"
         return self.create_or_update_page(title, new_content, summary=summary)

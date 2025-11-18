@@ -95,8 +95,15 @@ class TranslationPipeline:
         elif self.target_lang in langlinks and self.force:
             logger.info('Force mode: retranslating %s (existing: %s)', title, langlinks[self.target_lang])
         
-        # Translate title early to check if target exists (avoid unnecessary API calls)
-        target_title = self._translate_title(title)
+        # Determine target title without creating duplicates:
+        # If an interlanguage link already exists on the source, reuse that exact target title
+        # even in --force mode to avoid creating a duplicate target page with a different title.
+        if self.target_lang in langlinks:
+            target_title = langlinks[self.target_lang]
+        else:
+            # Otherwise, translate the title and check if such a page exists on target
+            target_title = self._translate_title(title)
+
         target_exists = self.target_mw.page_exists(target_title)
         
         # If target exists and --force not specified, only add interwiki link (no translation needed)
@@ -104,7 +111,7 @@ class TranslationPipeline:
             logger.info('Target page %s already exists. Only adding interwiki link to source page.', target_title)
             if not self.dry_run:
                 target_interwiki = f"[[{self.target_lang}:{target_title}]]"
-                self.source_mw.append_interwiki_link(title, target_interwiki)
+                self.source_mw.add_or_update_interwiki_link(title, target_interwiki)
             date_iso = datetime.now(timezone.utc).isoformat()
             self._append_log([title, target_title, self.source_lang, self.target_lang, 'linked', date_iso, 'target exists - adding interwiki on the source page only'])
             logger.info('Linked %s -> %s (target exists)', title, target_title)
@@ -205,7 +212,7 @@ class TranslationPipeline:
             
             # Also add interwiki link in source page pointing to target
             target_interwiki = f"[[{self.target_lang}:{target_title}]]"
-            self.source_mw.append_interwiki_link(title, target_interwiki)
+            self.source_mw.add_or_update_interwiki_link(title, target_interwiki)
         else:
             publish_resp = {'dry_run': True}
         

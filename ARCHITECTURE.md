@@ -27,7 +27,7 @@ Le projet est structuré en modules Python indépendants pour faciliter la maint
   - `fetch_page_wikitext()`: Récupération du contenu brut
   - `get_langlinks()`: Détection des traductions existantes
   - `create_or_update_page()`: Publication
-  - `append_interwiki_link()`: Ajout du lien interwiki sur la source
+  - `add_or_update_interwiki_link()`: Ajout du lien interwiki sur la source
 - Gestion CSRF token (récupération + cache)
 - Session HTTP persistante pour performance
 
@@ -99,7 +99,7 @@ Pour chaque page:
     ↓
     MediaWikiClient (target): create_or_update_page()
     ↓
-    MediaWikiClient (source): append_interwiki_link()
+    MediaWikiClient (source): add_or_update_interwiki_link()
     ↓
     CSV log: append row
 ```
