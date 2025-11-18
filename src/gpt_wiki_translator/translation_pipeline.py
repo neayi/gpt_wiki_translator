@@ -39,6 +39,18 @@ class TranslationPipeline:
             with self.log_path.open('w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerow(['source_page','target_page','source_lang','target_lang','status','date_iso','notes'])
+        # cache for other language clients
+        self._other_clients: dict[str, MediaWikiClient] = {}
+
+    def _derive_endpoint_for_lang(self, base_endpoint: str, lang: str) -> str:
+        """Derive an endpoint for another language by replacing first subdomain segment."""
+        from urllib.parse import urlparse, urlunparse
+        p = urlparse(base_endpoint)
+        parts = p.netloc.split('.')
+        if parts:
+            parts[0] = lang
+        netloc = '.'.join(parts)
+        return urlunparse((p.scheme, netloc, p.path, '', '', ''))
 
     def _append_log(self, row: List[str]):
         with self.log_path.open('a', newline='', encoding='utf-8') as f:
@@ -204,15 +216,42 @@ class TranslationPipeline:
         
         # Publish translated page (target_title already computed earlier)
         if not self.dry_run:
-            # Create/update target page with interwiki link back to source
+            # Build interwiki markers: source + any existing other languages
+            other_markers = []
+            for lang, other_page_title in langlinks.items():
+                if lang == self.source_lang:
+                    continue
+                if lang == self.target_lang:
+                    continue
+                other_markers.append(f"[[{lang}:{other_page_title}]]")
+
             source_interwiki = f"[[{self.source_lang}:{title}]]"
-            new_wikitext_with_interwiki = new_wikitext + f"\n{source_interwiki}\n"
-            
+            all_markers = [source_interwiki] + other_markers
+            markers_block = '\n'.join(all_markers)
+            new_wikitext_with_interwiki = new_wikitext + f"\n{markers_block}\n"
+
             publish_resp = self.target_mw.create_or_update_page(target_title, new_wikitext_with_interwiki)
-            
-            # Also add interwiki link in source page pointing to target
+
+            # Add/update interwiki link in source page pointing to target
             target_interwiki = f"[[{self.target_lang}:{target_title}]]"
             self.source_mw.add_or_update_interwiki_link(title, target_interwiki)
+
+            # Propagate English link to other existing language pages and add back-links to English
+            for lang, other_page_title in langlinks.items():
+                if lang in (self.source_lang, self.target_lang):
+                    continue
+                # Get or create client
+                client = self._other_clients.get(lang)
+                if client is None:
+                    ep = self._derive_endpoint_for_lang(self.source_mw.endpoint, lang)
+                    client = MediaWikiClient(ep, verify_ssl=self.verify_ssl)
+                    self._other_clients[lang] = client
+                # Add link to English page on that language page
+                english_marker = f"[[{self.target_lang}:{target_title}]]"
+                try:
+                    client.add_or_update_interwiki_link(other_page_title, english_marker, summary='Add English interwiki link')
+                except Exception as e:
+                    logger.warning('Failed updating interwiki on %s:%s -> %s: %s', lang, other_page_title, target_title, e)
         else:
             publish_resp = {'dry_run': True}
         
