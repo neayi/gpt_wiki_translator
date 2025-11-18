@@ -5,7 +5,15 @@ from .config import get_settings
 from .logging_utils import get_logger
 from .mediawiki_client import MediaWikiClient
 from .openai_client import OpenAIClient
-from .wikitext_parser import segment_wikitext, merge_translated, count_braces, restore_protected_template_params, extract_json_template_params
+from .wikitext_parser import (
+    segment_wikitext,
+    merge_translated,
+    count_braces,
+    restore_protected_template_params,
+    extract_json_template_params,
+    mask_templates_for_translation,
+    restore_masked_templates,
+)
 from .namespace_mapping import translate_namespace_prefix
 from .chunking import create_chunks, get_chunk_stats
 import csv
@@ -153,8 +161,11 @@ class TranslationPipeline:
                 json_replacements[raw] = f"{target_title}/{translated_subname}.json"
         
         
-        # Use intelligent chunking by sections
-        chunks = create_chunks(wikitext, max_tokens=7000)
+        # Mask template names and parameter keys to prevent their translation
+        masked_wikitext, template_mapping = mask_templates_for_translation(wikitext)
+
+        # Use intelligent chunking by sections on masked wikitext
+        chunks = create_chunks(masked_wikitext, max_tokens=7000)
         stats = get_chunk_stats(chunks)
         logger.info('Page %s: %d chunks, avg %d tokens/chunk', title, stats['count'], stats['avg_tokens'])
         
@@ -164,7 +175,9 @@ class TranslationPipeline:
             translated = self.ai.translate_chunk(chunk, self.source_lang, self.target_lang)
             translated_chunks.append(translated)
         # Reconstruct full translated wikitext
-        new_wikitext = '\n\n'.join(translated_chunks)
+        new_wikitext_masked = '\n\n'.join(translated_chunks)
+        # Restore template names and keys
+        new_wikitext = restore_masked_templates(new_wikitext_masked, template_mapping)
         # Restore protected template parameter values (Glyph, Icone, etc.)
         new_wikitext = restore_protected_template_params(wikitext, new_wikitext)
         # Apply JSON path replacements in translated wikitext

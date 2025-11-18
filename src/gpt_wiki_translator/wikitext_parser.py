@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Any
 import mwparserfromhell
 import unicodedata
 
@@ -125,3 +125,47 @@ def extract_json_template_params(wikitext: str) -> List[str]:
             if norm == 'json':
                 results.append(str(param.value).strip())
     return results
+
+def mask_templates_for_translation(wikitext: str) -> Tuple[str, Dict[str, str]]:
+    """Replace template names and parameter keys with placeholders to prevent their translation.
+    Returns (masked_wikitext, placeholder_mapping).
+
+    Placeholders use uncommon delimiters to avoid model alterations.
+    Template names: ⟪TPL_i⟫
+    Parameter keys: ⟪K_i_j⟫
+    Values are left intact for translation (unless later restored by protection logic).
+    """
+    try:
+        code = mwparserfromhell.parse(wikitext)
+    except Exception:
+        return wikitext, {}
+    mapping: Dict[str, str] = {}
+    output_parts: List[str] = []
+    tpl_index = 0
+    for node in code.nodes:
+        if isinstance(node, mwparserfromhell.nodes.Template):
+            tpl_name_placeholder = f'⟪TPL_{tpl_index}⟫'
+            mapping[tpl_name_placeholder] = str(node.name)
+            param_strings: List[str] = []
+            for param_index, param in enumerate(node.params):
+                key_placeholder = f'⟪K_{tpl_index}_{param_index}⟫'
+                mapping[key_placeholder] = str(param.name)
+                # Keep raw value (string) for translation
+                param_strings.append(f'{key_placeholder}={param.value}')
+            masked = '{{' + tpl_name_placeholder
+            if param_strings:
+                masked += '|' + ' | '.join(param_strings)
+            masked += '}}'
+            output_parts.append(masked)
+            tpl_index += 1
+        else:
+            output_parts.append(str(node))
+    return ''.join(output_parts), mapping
+
+def restore_masked_templates(masked_translated_wikitext: str, mapping: Dict[str, str]) -> str:
+    """Restore original template names and parameter keys from placeholder mapping."""
+    restored = masked_translated_wikitext
+    # Replace longer placeholders first (order doesn't really matter but deterministic)
+    for placeholder in sorted(mapping.keys(), key=lambda x: (-len(x), x)):
+        restored = restored.replace(placeholder, mapping[placeholder])
+    return restored
