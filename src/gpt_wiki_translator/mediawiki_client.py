@@ -96,22 +96,83 @@ class MediaWikiClient:
             return int(page_id) > 0
         return False
 
-    def get_langlinks(self, title: str) -> dict[str, str]:
+    def is_redirect(self, title: str) -> bool:
+        """Check if a page is a redirect."""
         params = {
             'action': 'query',
             'titles': title,
-            'prop': 'langlinks',
-            'lllimit': '500',
             'format': 'json'
         }
         r = self.session.get(self.endpoint, params=params, timeout=30, verify=self.verify_ssl)
         r.raise_for_status()
         data = r.json()
         pages = data.get('query', {}).get('pages', {})
-        langlinks: dict[str, str] = {}
         for page in pages.values():
-            for ll in page.get('langlinks', []) or []:
-                langlinks[ll['lang']] = ll['*']
+            return 'redirect' in page
+        return False
+
+    def resolve_redirect(self, title: str) -> str | None:
+        """Resolve a redirect to its final target page.
+        
+        Returns:
+            - Final target page title if redirect exists and target exists
+            - Original title if not a redirect and page exists
+            - None if page doesn't exist (or redirect target doesn't exist)
+        """
+        params = {
+            'action': 'query',
+            'titles': title,
+            'redirects': '1',
+            'format': 'json'
+        }
+        r = self.session.get(self.endpoint, params=params, timeout=30, verify=self.verify_ssl)
+        r.raise_for_status()
+        data = r.json()
+        
+        # Check if page exists by looking at the pages dict
+        pages = data.get('query', {}).get('pages', {})
+        for page_id, page in pages.items():
+            # If page has 'missing' key or negative ID, page doesn't exist
+            if 'missing' in page or int(page_id) < 0:
+                return None
+            # Page exists, check if there was a redirect
+            redirects = data.get('query', {}).get('redirects', [])
+            if redirects:
+                # Return the final target (last in chain)
+                return redirects[-1]['to']
+            # No redirect, return original title
+            return title
+        
+        return None
+
+    def get_langlinks(self, title: str) -> dict[str, str]:
+        langlinks: dict[str, str] = {}
+        continue_params = {}
+        
+        while True:
+            params = {
+                'action': 'query',
+                'titles': title,
+                'prop': 'langlinks',
+                'lllimit': '500',
+                'format': 'json'
+            }
+            # Add continuation parameters from previous response
+            params.update(continue_params)
+            
+            r = self.session.get(self.endpoint, params=params, timeout=30, verify=self.verify_ssl)
+            r.raise_for_status()
+            data = r.json()
+            pages = data.get('query', {}).get('pages', {})
+            for page in pages.values():
+                for ll in page.get('langlinks', []) or []:
+                    langlinks[ll['lang']] = ll['*']
+            
+            # Get entire continue structure for next request
+            continue_params = data.get('continue', {})
+            if not continue_params:
+                break
+                
         return langlinks
 
     def create_or_update_page(self, title: str, wikitext: str, summary: str = 'Automated translation') -> dict[str, Any]:
@@ -121,6 +182,7 @@ class MediaWikiClient:
             'title': title,
             'text': wikitext,
             'format': 'json',
+            'minor': '1',
             'token': token,
             'summary': summary,
             'watchlist': 'nochange'
@@ -138,6 +200,7 @@ class MediaWikiClient:
             'text': json_text,
             'format': 'json',
             'contentmodel': 'json',
+            'minor': '1',
             'contentformat': 'application/json',
             'token': token,
             'summary': summary,
