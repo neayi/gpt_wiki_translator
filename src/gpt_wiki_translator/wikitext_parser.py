@@ -24,6 +24,11 @@ PROTECTED_TEMPLATE_PARAMS = {
     'logo',
     "photo d'illustration",
     'logo organisme',
+    'image',
+    'class',
+    'type de page',
+    'frame',
+    'query',
 }
 
 def _normalize_param_name(name: str) -> str:

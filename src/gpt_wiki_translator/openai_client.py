@@ -27,7 +27,7 @@ class OpenAIClient:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
     def translate_chunk(self, text: str, source_lang: str, target_lang: str) -> str:
-        logger.info('Translating chunk (%d chars)...', len(text))
+        # logger.info('Translating chunk (%d chars)...', len(text))
         completion = self.client.chat.completions.create(
             model=self.settings.openai_model,
             temperature=self.settings.temperature,
