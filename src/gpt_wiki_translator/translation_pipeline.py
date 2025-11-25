@@ -120,31 +120,12 @@ class TranslationPipeline:
         
         # If target exists and --force not specified, only add interwiki link (no translation needed)
         if target_exists and not self.force:
-            logger.info('Target page %s already exists. Only adding interwiki links.', target_title)
+            logger.info('Target page %s already exists. Only adding interwiki link to source page.', target_title)
             if not self.dry_run:
-                # Add interwiki link on source page pointing to target
                 target_interwiki = f"[[{self.target_lang}:{target_title}]]"
                 self.source_mw.add_or_update_interwiki_link(title, target_interwiki)
-                
-                # Propagate target link to other existing language pages
-                for lang, other_page_title in langlinks.items():
-                    if lang in (self.source_lang, self.target_lang):
-                        continue
-                    # Get or create client for other language
-                    client = self._other_clients.get(lang)
-                    if client is None:
-                        ep = self._derive_endpoint_for_lang(self.source_mw.endpoint, lang)
-                        client = MediaWikiClient(ep, verify_ssl=self.verify_ssl)
-                        self._other_clients[lang] = client
-                    # Add link to target page on that language page
-                    target_marker = f"[[{self.target_lang}:{target_title}]]"
-                    try:
-                        client.add_or_update_interwiki_link(other_page_title, target_marker, summary=f'Add {self.target_lang} interwiki link')
-                        logger.info('Added interwiki link %s:%s -> %s:%s', lang, other_page_title, self.target_lang, target_title)
-                    except Exception as e:
-                        logger.warning('Failed updating interwiki on %s:%s -> %s: %s', lang, other_page_title, target_title, e)
             date_iso = datetime.now(timezone.utc).isoformat()
-            self._append_log([title, target_title, self.source_lang, self.target_lang, 'linked', date_iso, 'target exists - added interwiki links to source and other translations'])
+            self._append_log([title, target_title, self.source_lang, self.target_lang, 'linked', date_iso, 'target exists - adding interwiki on the source page only'])
             logger.info('Linked %s -> %s (target exists)', title, target_title)
             return
         
