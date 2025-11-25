@@ -139,9 +139,10 @@ class TranslationPipeline:
         # Detect JSON subpage references in templates
         json_refs = extract_json_template_params(wikitext)
         json_replacements = {}
+        json_placeholder_mapping = {}
         if json_refs:
             logger.info('Found %d JSON template references', len(json_refs))
-            for raw in json_refs:
+            for idx, raw in enumerate(json_refs):
                 # Expect pattern Base/Subpage.json
                 if not raw.lower().endswith('.json') or '/' not in raw:
                     continue
@@ -180,11 +181,19 @@ class TranslationPipeline:
                     self.target_mw.create_or_update_json_page(target_json_path, translated_json_text)
                 # Store replacement: original path -> target path (same path used for page creation)
                 json_replacements[raw] = target_json_path
+                # Create placeholder to prevent AI from translating this path
+                json_placeholder = f"⟪JSON_PATH_{idx}⟫"
+                json_placeholder_mapping[json_placeholder] = target_json_path
                 logger.info('JSON translation: %s -> %s', raw, target_json_path)
         
+        # Replace JSON paths in wikitext with placeholders before translation
+        wikitext_with_placeholders = wikitext
+        for original, placeholder in zip(json_refs, [f"⟪JSON_PATH_{i}⟫" for i in range(len(json_refs))]):
+            if original in json_replacements:
+                wikitext_with_placeholders = wikitext_with_placeholders.replace(original, placeholder)
         
         # Mask template names and parameter keys to prevent their translation
-        masked_wikitext, template_mapping = mask_templates_for_translation(wikitext)
+        masked_wikitext, template_mapping = mask_templates_for_translation(wikitext_with_placeholders)
 
         # Use intelligent chunking by sections on masked wikitext
         chunks = create_chunks(masked_wikitext, max_tokens=7000)
@@ -202,10 +211,9 @@ class TranslationPipeline:
         new_wikitext = restore_masked_templates(new_wikitext_masked, template_mapping)
         # Restore protected template parameter values (Glyph, Icone, etc.)
         new_wikitext = restore_protected_template_params(wikitext, new_wikitext)
-        # Apply JSON path replacements in translated wikitext
-        for original, newval in json_replacements.items():
-            # Replace only occurrences in json params (simple heuristic)
-            new_wikitext = new_wikitext.replace(original, newval)
+        # Replace JSON placeholders with translated paths
+        for placeholder, target_path in json_placeholder_mapping.items():
+            new_wikitext = new_wikitext.replace(placeholder, target_path)
         # Validation simple locale
         ob_open, ob_close = count_braces(wikitext)
         nb_open, nb_close = count_braces(new_wikitext)
