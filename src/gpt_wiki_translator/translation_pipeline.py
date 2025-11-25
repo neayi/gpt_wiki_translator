@@ -120,12 +120,31 @@ class TranslationPipeline:
         
         # If target exists and --force not specified, only add interwiki link (no translation needed)
         if target_exists and not self.force:
-            logger.info('Target page %s already exists. Only adding interwiki link to source page.', target_title)
+            logger.info('Target page %s already exists. Only adding interwiki links.', target_title)
             if not self.dry_run:
+                # Add interwiki link on source page pointing to target
                 target_interwiki = f"[[{self.target_lang}:{target_title}]]"
                 self.source_mw.add_or_update_interwiki_link(title, target_interwiki)
+                
+                # Propagate target link to other existing language pages
+                for lang, other_page_title in langlinks.items():
+                    if lang in (self.source_lang, self.target_lang):
+                        continue
+                    # Get or create client for other language
+                    client = self._other_clients.get(lang)
+                    if client is None:
+                        ep = self._derive_endpoint_for_lang(self.source_mw.endpoint, lang)
+                        client = MediaWikiClient(ep, verify_ssl=self.verify_ssl)
+                        self._other_clients[lang] = client
+                    # Add link to target page on that language page
+                    target_marker = f"[[{self.target_lang}:{target_title}]]"
+                    try:
+                        client.add_or_update_interwiki_link(other_page_title, target_marker, summary=f'Add {self.target_lang} interwiki link')
+                        logger.info('Added interwiki link %s:%s -> %s:%s', lang, other_page_title, self.target_lang, target_title)
+                    except Exception as e:
+                        logger.warning('Failed updating interwiki on %s:%s -> %s: %s', lang, other_page_title, target_title, e)
             date_iso = datetime.now(timezone.utc).isoformat()
-            self._append_log([title, target_title, self.source_lang, self.target_lang, 'linked', date_iso, 'target exists - adding interwiki on the source page only'])
+            self._append_log([title, target_title, self.source_lang, self.target_lang, 'linked', date_iso, 'target exists - added interwiki links to source and other translations'])
             logger.info('Linked %s -> %s (target exists)', title, target_title)
             return
         
@@ -156,7 +175,8 @@ class TranslationPipeline:
                     ).strip().strip('"\'')
                 except Exception:
                     translated_subname = subname
-                target_json_title = f"{target_title}/{translated_subname}.json"
+                # Build target JSON path: target_title/translated_subname.json
+                target_json_path = f"{target_title}/{translated_subname}.json"
                 # Fetch original JSON content
                 orig_json_text = self.source_mw.fetch_page_wikitext(raw) or ''
                 translated_json_text = orig_json_text
@@ -174,10 +194,12 @@ class TranslationPipeline:
                     translated_json_text = pyjson.dumps(data_trans, ensure_ascii=False, indent=2)
                 except Exception as e:
                     logger.warning('JSON translation failed or not JSON for %s: %s (keeping original)', raw, e)
-                # Create/update JSON page on target wiki
+                # Create/update JSON page on target wiki using the exact path
                 if not self.dry_run:
-                    self.target_mw.create_or_update_json_page(target_json_title, translated_json_text)
-                json_replacements[raw] = f"{target_title}/{translated_subname}.json"
+                    self.target_mw.create_or_update_json_page(target_json_path, translated_json_text)
+                # Store replacement: original path -> target path (same path used for page creation)
+                json_replacements[raw] = target_json_path
+                logger.info('JSON translation: %s -> %s', raw, target_json_path)
         
         
         # Mask template names and parameter keys to prevent their translation
@@ -185,8 +207,8 @@ class TranslationPipeline:
 
         # Use intelligent chunking by sections on masked wikitext
         chunks = create_chunks(masked_wikitext, max_tokens=7000)
-        stats = get_chunk_stats(chunks)
-        logger.info('Page %s: %d chunks, avg %d tokens/chunk', title, stats['count'], stats['avg_tokens'])
+        # stats = get_chunk_stats(chunks)
+        logger.info('Translating page: %s', title)
         
         # Translate each chunk
         translated_chunks: List[str] = []
